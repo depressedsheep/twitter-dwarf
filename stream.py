@@ -12,6 +12,9 @@ from config import ck, cs, ot, ots
 from prettytable import PrettyTable
 from nltk.corpus import stopwords
 from nltk.tokenize import RegexpTokenizer
+from sparselsh import LSH
+from scipy.sparse import csr_matrix
+
 import math
 tokenizer = RegexpTokenizer(r'\w+')
 
@@ -24,18 +27,12 @@ f = open(path_to_file +"/time-stream" + " " + q + " " + start_time, 'w')
 
 f.write(start_time+"/"+start_time + "\n")
 
-table_raw = PrettyTable(["Time", "ID", "Text"])
-table_entities = PrettyTable(["Time", "ID", "Mentions", "Hashtags"])
-table_nontrivial = PrettyTable(["Time",  "ID", "Text"])
 
-table_raw.align["Time"] = "l"
-table_raw.padding_width = 1
-table_entities.align["Time"] = "l"
-table_entities.padding_width = 1
-table_nontrivial.align["Time"] = "l"
-table_nontrivial.padding_width = 1
 def r(x,n):
-	return round(x, int(n - math.ceil(math.log10(abs(x)))))
+	if int(x) == 0:
+		return 0
+	else:
+		return round(x, int(n - math.ceil(math.log10(abs(x)))))
 
 def oauth_login():
 	CONSUMER_KEY = ck
@@ -62,13 +59,27 @@ s_s = []
 s_x = []
 s_times = []
 gr = []
-lim = 10
-
+lim = 50
+corpus_size = 5
+#DATA STRUCTURES
 t_ha = {}
 t_me = {}
 vocab = {}
 t_x = 0 #number of tweets
 t_vectors = {}
+t_vector_list = {}
+clusters = []
+
+table_raw = PrettyTable(["Time", "ID", "Text"])
+table_entities = PrettyTable(["Time", "ID", "Mentions", "Hashtags"])
+table_nontrivial = PrettyTable(["Time",  "ID", "Text"])
+
+table_raw.align["Time"] = "l"
+table_raw.padding_width = 1
+table_entities.align["Time"] = "l"
+table_entities.padding_width = 1
+table_nontrivial.align["Time"] = "l"
+table_nontrivial.padding_width = 1
 
 def find_smooth(c, depth = 0): #not called when c is 0
 	global s_s
@@ -80,6 +91,37 @@ def find_smooth(c, depth = 0): #not called when c is 0
 		return s_s[c-501]
 	else:
 		return alpha * s_x[c-1] + (1-alpha) * find_smooth(c-1, depth + 1)
+def cossim(v1, v2):
+	_a = {}
+	_b = {}
+	_a = v1['ti_table']
+	_b = v2['ti_table']
+	cs = 0
+	for a in _a:
+		if z in _b:
+			cs += _a[a] * _b[z]
+	cs /= (v1['length'] * v2['length'])
+	#print "cs is :" + str(cs)
+def v_standardise(v):
+	#something
+	#print "original: " + str(v)
+	global vocab
+	global t_vector_list
+	k = []
+	v_l = []
+	#print type(v)
+	for a in vocab:
+		if a not in v:
+			v[a] = 0
+#	print "after: " + str(v)
+	
+	for a in v:
+		k.append(a)
+	k.sort()
+	for a in k:
+		v_l.append(v[a])
+	#print v_l
+	return v_l
 
 g = open(path_to_file + "/tweets-RAW.txt", 'w')
 h = open(path_to_file + "/tweet-entities.txt",'w')
@@ -95,10 +137,13 @@ for tweet in stream:
 	temp_vector = {}  #tweet by tweet basis
 
 	if c == lim:
+		#print pp(clusters)
 		#print s_times
 		#print "smoothed : " + str(s_s)
 		#print pp(t_ha)
 		#print pp(vocab)
+		#print pp(t_vectors)
+		#print pp(t_vector_list)
 		g.write(str(table_raw))
 		nt.write(str(table_nontrivial))
 		plt.plot(s_times, s_s, "-b")
@@ -109,7 +154,7 @@ for tweet in stream:
 	#	plt.show()
 		plt.draw()
 		fig1.savefig(path_to_file+"/"+q + "-" + start_time + ".svg")
-
+		plt.clf()
 		plt.plot(s_times, s_x, "-r")
 		pylab.ylim([0,100])
 		fig2 = plt.gcf()
@@ -172,7 +217,7 @@ for tweet in stream:
 	for a in f_t:
 		et += a + " "
 	#print f_t
-	for a in f_t:
+	for a in f_t: #update the dictionary to compass words in new tweet
 		if a not in vocab:
 			vocab[a] = 1
 		else:
@@ -185,23 +230,83 @@ for tweet in stream:
 
 	table_nontrivial.add_row([str(dt), tweet['id'], et])
 	#print f_t
+	#lsh (locality sensitive hashing)
+	#first, standardise the number of dimensions for the vectors
+	for a in t_vectors:
+		#t_vectors[a]['ti_table'] 
+		t_vector_list[a] = v_standardise(t_vectors[a]['ti_table']) 
+	if t_x > corpus_size: #don't run for the first tweet
+		y = [a for a in t_vector_list]
+		X = csr_matrix([t_vector_list[a] for a in t_vector_list])
+		lsh = LSH(16, X.shape[1], num_hashtables=1, storage_config={"dict":None})
+		for ix in xrange(X.shape[0]):
+			x = X.getrow(ix)
+			_c = y[ix]
+			lsh.index(x, extra_data=_c)
 
 	#now implt tf idf sorting
-	#idf:
-	for a in temp_vocab:
-		temp_vector[a] = math.log(t_x/vocab[a])
-	#print pp(temp_vector)
 
+	#idf:
+	for a in temp_vocab: 
+		try:
+			temp_vector[a] = math.log(t_x/vocab[a])
+		except ValueError:
+			pass
 	#tf:
 	for a in temp_vocab:
 		temp_vocab[a]['ti'] = {}
-		temp_vocab[a]['ti'] = vocab[a] * temp_vector[a]
-	t_vectors[tweet['id']] = {}
-	t_vectors[tweet['id']]['length'] = math.sqrt(sum(temp_vocab[a]['ti']**2 for a in temp_vocab))
-	t_vectors[tweet['id']]['ti_table'] = {}
+		try:
+			temp_vocab[a]['ti'] = vocab[a] * temp_vector[a]
+		except KeyError:
+			print "something is seriously wrong"
+			temp_vocab[a]['ti'] = 0
+
+	t_vectors[tweet['id']] = {} #init new container for new vector
+	t_vectors[tweet['id']]['length'] = r(math.sqrt(sum(temp_vocab[a]['ti']**2 for a in temp_vocab)),4) # find length of vector, save to globalish container
+	t_vectors[tweet['id']]['ti_table'] = {} #initialise tf idf table
+
 	for a in temp_vocab:
-		t_vectors[tweet['id']]['ti_table'][a] = temp_vocab[a]['freq']
-	print pp(t_vectors)
+		t_vectors[tweet['id']]['ti_table'][a] = r(temp_vocab[a]['ti'], 4) #save the vector into global vector container
+		#print temp_vocab[a]['ti']
+	#print "=== CHECK ==="
+	#print t_vectors[tweet['id']]['ti_table']
+
+	t_vector_list[tweet['id']] = v_standardise(t_vectors[tweet['id']]['ti_table'])
+	#print pp(t_vector_list)
+	#list is meant for csr usage, while the dictionary is meant to be mutable so as to accomodate new vocab over time
+	#update dictionary --> matrix is created again to incorporate the new values
+	#lsh query'
+	if t_x > corpus_size:
+		x_sim = t_vector_list[tweet['id']]
+
+		x_sim = csr_matrix([x_sim])
+
+		try :
+			n_p = lsh.query(x_sim, num_results=1)
+		except IndexError:
+			print t_vector_list[tweet['id']]
+			
+		try: 
+			sim_id = n_p[0][0][1]
+			sim_score = n_p[0][1]
+			if sim_score > 6:
+				print sim_score
+				clusters.append([tweet['id']])
+			else:
+				print "omg"
+				for a in xrange(len(clusters)):
+					if sim_id in clusters[a]:
+						clusters[a].append(sim_id)
+		except IndexError:
+			clusters.append([tweet['id']])
+	#	print sim_id
+		
+		
+		
+
+	#print pp(t_vectors)
+
+	#now compare it with everything else except itself? hm
 	try:
 		dt == prev #is this tweet the same bin as the previous one?
 	except NameError: #only happens for 1st tweet		
@@ -246,6 +351,7 @@ for tweet in stream:
 		#print s_x
 
 		if not c == 0:
+			
 			s_t = find_smooth(c)
 			s_s.append(s_t)
 			s_x.append(tc)
