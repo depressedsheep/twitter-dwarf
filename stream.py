@@ -65,7 +65,7 @@ s_times = []
 gr = []
 lim = 100
 corpus_size = 5
-sim_thres = 30
+
 #DATA STRUCTURES
 t_ha = {}
 t_me = {}
@@ -76,8 +76,8 @@ t_vector_list = {}
 clusters = {}
 c_no = 0
 tweet_dict = {}
-
-vt = open("obama-vocab.txt", 'r')
+new_vocab = []
+vt = open("obama-vocab.txt", 'a+')
 s_vt = {}
 for a in vt:
 	vocab[a] = 0
@@ -153,6 +153,8 @@ for tweet in stream:
 
 	if c == lim:
 		cw.write(pp(clusters))
+		for a in new_vocab:
+			vt.write(a + "\n")
 		#print s_times
 		#print "smoothed : " + str(s_s)
 		#print pp(t_ha)
@@ -240,10 +242,12 @@ for tweet in stream:
 	for a in f_t: #update the dictionary to compass words in new tweet
 		if a not in vocab:
 			vocab[a] = 1
+			new_vocab.append(a)
 		else:
 			vocab[a] += 1
 		if a not in temp_vocab:
 			temp_vocab[a] = {}
+
 			temp_vocab[a]["freq"] = 1
 		else:
 			temp_vocab[a]["freq"] += 1
@@ -263,7 +267,7 @@ for tweet in stream:
 		X = lil_matrix([t_vector_list[a] for a in t_vector_list])
 		X = X.tocsr()
 		t_5 = datetime.datetime.now()
-		lsh = LSH(4, X.shape[1], num_hashtables=1, storage_config={"dict":None})
+		lsh = LSH(8, X.shape[1], num_hashtables=1, storage_config={"dict":None})
 		
 		for ix in xrange(X.shape[0]):
 			x = X.getrow(ix)
@@ -329,23 +333,24 @@ for tweet in stream:
 			print sim_score
 			print "current tweet: " + tweet_dict[tweet['id']]
 			print "sim tweet?: " + tweet_dict[sim_id]
+			"""
 			if sim_score > sim_thres:
 				print sim_score
 			#	print "current id: " + str(tweet['id'])
 			#	print "candidate id: " + str(sim_id)
-				print " ================================ DUDE ================================="
+				print " === sigh ==="
 				print "length of cluster is " + str(len(clusters))
 				clusters[c_no] = [{'id':tweet['id'], 'text':tweet_dict[tweet['id']]}]
 				c_no += 1
-				print len(clusters)
+				print len(clusters)"""
 
-			else:
-				print "=== omg ==="
+			
+			print "=== omg ==="
 				
-				for a in clusters:
-					for b in clusters[a]:
-						if sim_id == b['id']:
-							clusters[a].append({'id':tweet['id'], 'text':tweet_dict[tweet['id']]})
+			for a in clusters:
+				for b in clusters[a]:
+					if sim_id == b['id']:
+						clusters[a].append({'id':tweet['id'], 'text':tweet_dict[tweet['id']]})
 
 		except IndexError:
 			clusters[c_no] = [{'id':tweet['id'], 'text':tweet_dict[tweet['id']]}]
