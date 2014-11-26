@@ -14,12 +14,16 @@ from nltk.corpus import stopwords
 from nltk.tokenize import RegexpTokenizer
 from sparselsh import LSH
 from scipy.sparse import csr_matrix
-
+from scipy.sparse import lil_matrix
+import operator
 import math
+
 tokenizer = RegexpTokenizer(r'\w+')
+OLD_STDOUT = sys.stdout
+sys.stdout = open("log.txt", 'w')
 
 pp = partial(json.dumps, indent = 1)
-q = 'Obama'
+q = 'Obama ferguson,obama immigration, obama ozone'
 start_time = str(datetime.datetime.now())[:-7]
 path_to_file = q + "/" + start_time
 os.makedirs(path_to_file)
@@ -59,8 +63,9 @@ s_s = []
 s_x = []
 s_times = []
 gr = []
-lim = 50
+lim = 100
 corpus_size = 5
+sim_thres = 30
 #DATA STRUCTURES
 t_ha = {}
 t_me = {}
@@ -68,8 +73,15 @@ vocab = {}
 t_x = 0 #number of tweets
 t_vectors = {}
 t_vector_list = {}
-clusters = []
+clusters = {}
+c_no = 0
+tweet_dict = {}
 
+vt = open("obama-vocab.txt", 'r')
+s_vt = {}
+for a in vt:
+	vocab[a] = 0
+	s_vt[a] = 0
 table_raw = PrettyTable(["Time", "ID", "Text"])
 table_entities = PrettyTable(["Time", "ID", "Mentions", "Hashtags"])
 table_nontrivial = PrettyTable(["Time",  "ID", "Text"])
@@ -105,8 +117,8 @@ def cossim(v1, v2):
 def v_standardise(v):
 	#something
 	#print "original: " + str(v)
+
 	global vocab
-	global t_vector_list
 	k = []
 	v_l = []
 	#print type(v)
@@ -126,8 +138,11 @@ def v_standardise(v):
 g = open(path_to_file + "/tweets-RAW.txt", 'w')
 h = open(path_to_file + "/tweet-entities.txt",'w')
 nt = open(path_to_file + "/tweets-nontrivial.txt", 'w')
+cw = open(path_to_file + "/clusters.txt", 'w')
+nt_vocab = open(path_to_file + "/tweets-vocab-nontrivial.txt", 'w')
 dt_i = int(time.time())
 for tweet in stream:
+	print "\n"
 	t_x += 1
 	#DEF TEMP VARIABLES
 	_denm = {} #temporary : _ entity dictionary for mentions
@@ -137,13 +152,15 @@ for tweet in stream:
 	temp_vector = {}  #tweet by tweet basis
 
 	if c == lim:
-		#print pp(clusters)
+		cw.write(pp(clusters))
 		#print s_times
 		#print "smoothed : " + str(s_s)
 		#print pp(t_ha)
-		#print pp(vocab)
+		sorted_vocab = sorted(vocab.items(), key = operator.itemgetter(1))
+		nt_vocab.write(str(pp(sorted_vocab))) 
 		#print pp(t_vectors)
 		#print pp(t_vector_list)
+
 		g.write(str(table_raw))
 		nt.write(str(table_nontrivial))
 		plt.plot(s_times, s_s, "-b")
@@ -208,6 +225,7 @@ for tweet in stream:
 		else:
 			et += a + " "
 	#print et
+	tweet_dict[tweet['id']] = et
 	et = tokenizer.tokenize(et)
 	for a in range(len(et)): #deals with capital letters
 		et[a] = et[a].lower()
@@ -217,6 +235,8 @@ for tweet in stream:
 	for a in f_t:
 		et += a + " "
 	#print f_t
+	#timeinterval 1
+	t_1 = datetime.datetime.now()
 	for a in f_t: #update the dictionary to compass words in new tweet
 		if a not in vocab:
 			vocab[a] = 1
@@ -232,20 +252,31 @@ for tweet in stream:
 	#print f_t
 	#lsh (locality sensitive hashing)
 	#first, standardise the number of dimensions for the vectors
+	
 	for a in t_vectors:
 		#t_vectors[a]['ti_table'] 
 		t_vector_list[a] = v_standardise(t_vectors[a]['ti_table']) 
+
+	
 	if t_x > corpus_size: #don't run for the first tweet
 		y = [a for a in t_vector_list]
-		X = csr_matrix([t_vector_list[a] for a in t_vector_list])
-		lsh = LSH(16, X.shape[1], num_hashtables=1, storage_config={"dict":None})
+		X = lil_matrix([t_vector_list[a] for a in t_vector_list])
+		X = X.tocsr()
+		t_5 = datetime.datetime.now()
+		lsh = LSH(4, X.shape[1], num_hashtables=1, storage_config={"dict":None})
+		
 		for ix in xrange(X.shape[0]):
 			x = X.getrow(ix)
 			_c = y[ix]
 			lsh.index(x, extra_data=_c)
+		t_2 = datetime.datetime.now()
+		print "Time interval 5: " + str(t_2 - t_5)
 
 	#now implt tf idf sorting
 
+	#print "Time interval 1: " + str(t_2 - t_1)
+
+	
 	#idf:
 	for a in temp_vocab: 
 		try:
@@ -254,11 +285,14 @@ for tweet in stream:
 			pass
 	#tf:
 	for a in temp_vocab:
-		temp_vocab[a]['ti'] = {}
+		temp_vocab[a]['ti'] = 0
+		#print "=== check ===" 
+	#	print a
 		try:
 			temp_vocab[a]['ti'] = vocab[a] * temp_vector[a]
+
 		except KeyError:
-			print "something is seriously wrong"
+			print "something is wrong but no one knows why"
 			temp_vocab[a]['ti'] = 0
 
 	t_vectors[tweet['id']] = {} #init new container for new vector
@@ -270,12 +304,14 @@ for tweet in stream:
 		#print temp_vocab[a]['ti']
 	#print "=== CHECK ==="
 	#print t_vectors[tweet['id']]['ti_table']
-
+	#t_3 = datetime.datetime.now()
+	#print "Time interval 2: " + str(t_3 - t_2)
 	t_vector_list[tweet['id']] = v_standardise(t_vectors[tweet['id']]['ti_table'])
 	#print pp(t_vector_list)
 	#list is meant for csr usage, while the dictionary is meant to be mutable so as to accomodate new vocab over time
 	#update dictionary --> matrix is created again to incorporate the new values
 	#lsh query'
+	
 	if t_x > corpus_size:
 		x_sim = t_vector_list[tweet['id']]
 
@@ -285,23 +321,38 @@ for tweet in stream:
 			n_p = lsh.query(x_sim, num_results=1)
 		except IndexError:
 			print t_vector_list[tweet['id']]
+			print "such error"
 			
 		try: 
 			sim_id = n_p[0][0][1]
 			sim_score = n_p[0][1]
-			if sim_score > 6:
+			print sim_score
+			print "current tweet: " + tweet_dict[tweet['id']]
+			print "sim tweet?: " + tweet_dict[sim_id]
+			if sim_score > sim_thres:
 				print sim_score
-				clusters.append([tweet['id']])
+			#	print "current id: " + str(tweet['id'])
+			#	print "candidate id: " + str(sim_id)
+				print " ================================ DUDE ================================="
+				print "length of cluster is " + str(len(clusters))
+				clusters[c_no] = [{'id':tweet['id'], 'text':tweet_dict[tweet['id']]}]
+				c_no += 1
+				print len(clusters)
+
 			else:
-				print "omg"
-				for a in xrange(len(clusters)):
-					if sim_id in clusters[a]:
-						clusters[a].append(sim_id)
+				print "=== omg ==="
+				
+				for a in clusters:
+					for b in clusters[a]:
+						if sim_id == b['id']:
+							clusters[a].append({'id':tweet['id'], 'text':tweet_dict[tweet['id']]})
+
 		except IndexError:
-			clusters.append([tweet['id']])
+			clusters[c_no] = [{'id':tweet['id'], 'text':tweet_dict[tweet['id']]}]
+			c_no += 1
 	#	print sim_id
-		
-		
+	#t_4 = datetime.datetime.now()
+	#print "Time interval 3: " + str(t_4-t_3)
 		
 
 	#print pp(t_vectors)
